@@ -6,8 +6,8 @@
       "archive_root": "wasmtime-v46.0.1-aarch64-macos-c-api",
       "sha256": "f2a33c780715cbe740ca888ed3ee38a197d970800ca1b117b338db3aed819333",
       "url": "https://github.com/bytecodealliance/wasmtime/releases/download/v46.0.1/wasmtime-v46.0.1-aarch64-macos-c-api.tar.xz",
-      "include": "min/include",
-      "static_library": "min/lib/libwasmtime.a",
+      "include": "include",
+      "static_library": "lib/libwasmtime.a",
       "static_library_name": "libwasmtime.a"
     }
   }

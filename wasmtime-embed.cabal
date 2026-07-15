@@ -16,7 +16,6 @@ extra-source-files:
     vendor/wasmtime/**/*.h
     vendor/wasmtime/**/*.hh
     vendor/wasmtime/**/*.a
-    test/fixtures/hello.cwasm
 
 custom-setup
   setup-depends:

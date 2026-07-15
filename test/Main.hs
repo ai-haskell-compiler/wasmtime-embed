@@ -1,17 +1,28 @@
+{-# LANGUAGE MultilineStrings #-}
+{-# LANGUAGE OverloadedStrings #-}
+
 module Main (main) where
 
 import Control.Exception (try)
-import qualified Data.ByteString as ByteString
+import Data.ByteString (ByteString)
 import Data.IORef (newIORef, readIORef, writeIORef)
 import Data.List (isInfixOf)
 import Wasmtime
+
+helloWat :: ByteString
+helloWat =
+  """
+  (module
+    (func $hello (import "" "hello"))
+    (func (export "run") (call $hello))
+  )
+  """
 
 main :: IO ()
 main = do
   engine <- newEngine
   store <- newStore engine
-  serialized <- ByteString.readFile "test/fixtures/hello.cwasm"
-  wasmModule <- deserializeModule engine serialized
+  wasmModule <- compileWatModule engine helloWat
   called <- newIORef False
   hello <- newHostFunc0 store (writeIORef called True)
   wasmInstance <- instantiate store wasmModule [hello]
