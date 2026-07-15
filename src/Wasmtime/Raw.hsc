@@ -141,6 +141,10 @@ foreign import ccall safe "wasmtime_module_deserialize"
   wasmtimeModuleDeserialize ::
     Ptr WasmEngine -> Ptr Word8 -> CSize -> Ptr (Ptr WasmtimeModule) -> IO (Ptr WasmtimeError)
 
+foreign import ccall safe "wasmtime_module_serialize"
+  wasmtimeModuleSerialize ::
+    Ptr WasmtimeModule -> Ptr WasmByteVec -> IO (Ptr WasmtimeError)
+
 foreign import ccall safe "wasmtime_module_new"
   wasmtimeModuleNew ::
     Ptr WasmEngine -> Ptr Word8 -> CSize -> Ptr (Ptr WasmtimeModule) -> IO (Ptr WasmtimeError)
