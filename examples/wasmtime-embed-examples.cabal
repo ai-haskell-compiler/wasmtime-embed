@@ -33,3 +33,15 @@ executable hello
       wasmtime-embed >=0.1 && <0.2
   ghc-options: -Wall -Wcompat
   default-language: GHC2021
+
+executable serialize
+  autogen-modules: Paths_wasmtime_embed_examples
+  other-modules: Paths_wasmtime_embed_examples
+  main-is: Main.hs
+  hs-source-dirs: serialize
+  build-depends:
+      base >=4.18 && <5,
+      bytestring >=0.11 && <0.13,
+      wasmtime-embed >=0.1 && <0.2
+  ghc-options: -Wall -Wcompat
+  default-language: GHC2021

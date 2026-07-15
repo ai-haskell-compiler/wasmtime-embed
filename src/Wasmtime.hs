@@ -17,6 +17,7 @@ module Wasmtime
     newEngine,
     newStore,
     compileWatModule,
+    serializeModule,
     deserializeModule,
     newHostFunc0,
     instantiate,
@@ -29,7 +30,8 @@ where
 import Control.Exception (Exception, SomeException, bracket, displayException, mask_, throwIO, try)
 import Control.Monad (unless, when)
 import Data.ByteString (ByteString)
-import qualified Data.ByteString.Unsafe as ByteString
+import qualified Data.ByteString as ByteString
+import qualified Data.ByteString.Unsafe as ByteString.Unsafe
 import Data.Int (Int32)
 import Foreign.C.String (peekCStringLen, withCStringLen)
 import Foreign.C.Types (CBool (..))
@@ -124,7 +126,7 @@ newStore engine@(Engine enginePointer) =
 -- WebAssembly module cannot be compiled.
 compileWatModule :: Engine -> ByteString -> IO Module
 compileWatModule engine@(Engine enginePointer) wat =
-  ByteString.unsafeUseAsCStringLen wat $ \(watBytes, watSize) ->
+  ByteString.Unsafe.unsafeUseAsCStringLen wat $ \(watBytes, watSize) ->
     allocaBytesAligned Raw.byteVecBytes Raw.byteVecAlignment $ \wasm -> do
       checkError =<< Raw.wasmtimeWat2Wasm watBytes (fromIntegral watSize) wasm
       bracket
@@ -145,6 +147,27 @@ compileWatModule engine@(Engine enginePointer) wat =
               foreignPointer <- newForeignPtr Raw.wasmtimeModuleDeleteFinalizer pointer
               pure Module {modulePointer = foreignPointer, moduleEngine = engine}
 
+-- | Serialize a compiled module into Wasmtime's precompiled format.
+--
+-- The resulting data can be passed to 'deserializeModule' when using a
+-- compatible Wasmtime version, target, and engine configuration. Serialized
+-- modules may contain executable code and must not be accepted from untrusted
+-- sources.
+--
+-- Throws @WasmtimeException@ if the module cannot be serialized.
+serializeModule :: Module -> IO ByteString
+serializeModule wasmModule =
+  withForeignPtr (modulePointer wasmModule) $ \moduleRaw ->
+    allocaBytesAligned Raw.byteVecBytes Raw.byteVecAlignment $ \serialized -> do
+      checkError =<< Raw.wasmtimeModuleSerialize moduleRaw serialized
+      bracket
+        (pure ())
+        (const (Raw.wasmByteVecDelete serialized))
+        $ \() -> do
+          size <- Raw.byteVecSize serialized
+          bytes <- Raw.byteVecData serialized
+          ByteString.packCStringLen (bytes, fromIntegral size)
+
 -- | Build a module from serialized compiled-module data.
 --
 -- Only pass data previously produced by a compatible Wasmtime version and
@@ -155,7 +178,7 @@ compileWatModule engine@(Engine enginePointer) wat =
 -- Throws @WasmtimeException@ if the data cannot be deserialized.
 deserializeModule :: Engine -> ByteString -> IO Module
 deserializeModule engine@(Engine enginePointer) serialized =
-  ByteString.unsafeUseAsCStringLen serialized $ \(bytes, size) ->
+  ByteString.Unsafe.unsafeUseAsCStringLen serialized $ \(bytes, size) ->
     alloca $ \moduleOutput ->
       withForeignPtr enginePointer $ \engineRaw -> do
         checkError =<<
