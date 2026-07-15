@@ -20,6 +20,7 @@ data WasmtimeModule
 data WasmtimeStore
 data WasmtimeFunc
 data WasmtimeInstance
+data WasmtimeLinker
 data WasmtimeExtern
 data WasmtimeVal
 
@@ -159,6 +160,30 @@ foreign import ccall safe "wasmtime_instance_new"
     Ptr WasmtimeModule ->
     Ptr WasmtimeExtern ->
     CSize ->
+    Ptr WasmtimeInstance ->
+    Ptr (Ptr WasmTrap) ->
+    IO (Ptr WasmtimeError)
+
+foreign import ccall unsafe "wasmtime_linker_new"
+  wasmtimeLinkerNew :: Ptr WasmEngine -> IO (Ptr WasmtimeLinker)
+
+foreign import ccall unsafe "wasmtime_linker_delete"
+  wasmtimeLinkerDelete :: Ptr WasmtimeLinker -> IO ()
+
+foreign import ccall safe "wasmtime_linker_define_instance"
+  wasmtimeLinkerDefineInstance ::
+    Ptr WasmtimeLinker ->
+    Ptr WasmtimeContext ->
+    Ptr CChar ->
+    CSize ->
+    Ptr WasmtimeInstance ->
+    IO (Ptr WasmtimeError)
+
+foreign import ccall safe "wasmtime_linker_instantiate"
+  wasmtimeLinkerInstantiate ::
+    Ptr WasmtimeLinker ->
+    Ptr WasmtimeContext ->
+    Ptr WasmtimeModule ->
     Ptr WasmtimeInstance ->
     Ptr (Ptr WasmTrap) ->
     IO (Ptr WasmtimeError)
