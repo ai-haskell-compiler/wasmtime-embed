@@ -4,6 +4,7 @@ module Wasmtime.Raw where
 
 #include <wasmtime.h>
 
+import Data.Int (Int32)
 import Data.Word (Word8)
 import Foreign.C.Types (CBool (..), CChar, CSize (..))
 import Foreign.Ptr (FunPtr, Ptr, plusPtr)
@@ -66,6 +67,26 @@ externFunc pointer = pointer `plusPtr` #{offset wasmtime_extern_t, of.func}
 
 externKindFunc :: Word8
 externKindFunc = #{const WASMTIME_EXTERN_FUNC}
+
+valBytes :: Int
+valBytes = #{size wasmtime_val_t}
+
+valAlignment :: Int
+valAlignment = #{alignment wasmtime_val_t}
+
+valKind :: Ptr WasmtimeVal -> IO Word8
+valKind pointer = peekByteOff pointer #{offset wasmtime_val_t, kind}
+
+setValI32 :: Ptr WasmtimeVal -> Int32 -> IO ()
+setValI32 pointer value = do
+  pokeByteOff pointer #{offset wasmtime_val_t, kind} (#{const WASMTIME_I32} :: Word8)
+  pokeByteOff pointer #{offset wasmtime_val_t, of.i32} value
+
+valI32 :: Ptr WasmtimeVal -> IO Int32
+valI32 pointer = peekByteOff pointer #{offset wasmtime_val_t, of.i32}
+
+valKindI32 :: Word8
+valKindI32 = #{const WASMTIME_I32}
 
 type Finalizer = Ptr () -> IO ()
 

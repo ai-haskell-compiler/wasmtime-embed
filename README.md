@@ -1,9 +1,9 @@
 # wasmtime-embed
 
 An experimental high-level Haskell binding to the Wasmtime C API. It currently
-implements the Wasmtime Book's hello-world flow: load an ahead-of-time compiled
-module, create a no-argument host function, instantiate the module, find a
-function export, and call it.
+implements the Wasmtime Book's hello-world and GCD flows: load an ahead-of-time
+compiled module, instantiate it, find function exports, and call them. The
+hello example also demonstrates creating a no-argument host function.
 
 The native dependency is Wasmtime 46.0.1's minified C API. Native artifacts are
 kept out of Git and pinned by URL and SHA-256 in `wasmtime-artifacts.json`.
@@ -12,13 +12,14 @@ installing a release does not download or discover native dependencies.
 
 The minified runtime intentionally omits the compiler and WAT parser. Modules
 must therefore be ahead-of-time compiled and serialized by the matching
-Wasmtime version and target. The hello package bundles such a `.cwasm` module;
+Wasmtime version and target. The examples package bundles such `.cwasm` modules;
 `deserializeModule` loads trusted serialized modules at runtime.
 
 ```sh
 python3 scripts/prepare-wasmtime.py
 cabal build
 cabal run hello
+cabal run gcd
 cabal test
 ```
 
@@ -27,10 +28,10 @@ downloads the artifact for the host into the ignored `vendor/wasmtime` cache
 and verifies its checksum. A source distribution downloaded from Hackage is
 already self-contained.
 
-The hello-world program and its precompiled module belong to the separate local
-`wasmtime-embed-examples` package. The root `cabal.project` includes that
-package for convenient development, while the publishable `wasmtime-embed`
-package still contains only its library and test suite.
+The example programs and their precompiled modules belong to the separate local
+`wasmtime-embed-examples` package. The root `cabal.project` includes that package
+for convenient development, while the publishable `wasmtime-embed` package
+still contains only its library and test suite.
 
 ## Dependencies
 

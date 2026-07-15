@@ -16,6 +16,7 @@ module Wasmtime
     instantiate,
     getFunc,
     call0,
+    call2I32,
   )
 where
 
@@ -23,6 +24,7 @@ import Control.Exception (Exception, SomeException, bracket, displayException, m
 import Control.Monad (unless, when)
 import Data.ByteString (ByteString)
 import qualified Data.ByteString.Unsafe as ByteString
+import Data.Int (Int32)
 import Foreign.C.String (peekCStringLen, withCStringLen)
 import Foreign.C.Types (CBool (..))
 import Foreign.ForeignPtr
@@ -193,6 +195,36 @@ call0 store function = do
           trapOutput
       checkErrorOrTrap errorPointer =<< peek trapOutput
   touchForeignPtr (storePointer store)
+
+-- | Call a function with two WebAssembly @i32@ arguments and one @i32@ result.
+call2I32 :: Store -> Func -> Int32 -> Int32 -> IO Int32
+call2I32 store function left right = do
+  unless (sameStore store (funcStore function)) $
+    throwIO (WasmtimeException "function belongs to a different store")
+  result <-
+    withForeignPtr (funcPointer function) $ \external ->
+      allocaBytesAligned (2 * Raw.valBytes) Raw.valAlignment $ \arguments ->
+        allocaBytesAligned Raw.valBytes Raw.valAlignment $ \results ->
+          alloca $ \trapOutput -> do
+            Raw.setValI32 arguments left
+            Raw.setValI32 (arguments `plusPtr` Raw.valBytes) right
+            poke trapOutput nullPtr
+            errorPointer <-
+              Raw.wasmtimeFuncCall
+                (storeContext store)
+                (Raw.externFunc external)
+                arguments
+                2
+                results
+                1
+                trapOutput
+            checkErrorOrTrap errorPointer =<< peek trapOutput
+            kind <- Raw.valKind results
+            unless (kind == Raw.valKindI32) $
+              throwIO (WasmtimeException "function result is not i32")
+            Raw.valI32 results
+  touchForeignPtr (storePointer store)
+  pure result
 
 withExternArray :: [Func] -> (Ptr Raw.WasmtimeExtern -> Int -> IO a) -> IO a
 withExternArray functions action =
