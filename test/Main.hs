@@ -38,9 +38,13 @@ linking2Wat =
 
 main :: IO ()
 main = do
+  compilationEngine <- newEngine
+  compiledModule <- compileWatModule compilationEngine helloWat
+  serialized <- serializeModule compiledModule
+
   engine <- newEngine
   store <- newStore engine
-  wasmModule <- compileWatModule engine helloWat
+  wasmModule <- deserializeModule engine serialized
   called <- newIORef False
   hello <- newHostFunc0 store (writeIORef called True)
   wasmInstance <- instantiate store wasmModule [hello]

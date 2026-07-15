@@ -1,19 +1,22 @@
 # wasmtime-embed
 
 An experimental high-level Haskell binding to the Wasmtime C API. It currently
-implements the Wasmtime Book's hello-world, GCD, and module-linking flows:
-compile or load a module, instantiate it directly or through a linker, find
-function exports, and call them. The hello and linking examples also demonstrate
-creating a no-argument host function.
+implements the Wasmtime Book's hello-world, GCD, module-linking, serialization,
+and linear-memory flows: compile or load a module, serialize and deserialize
+compiled modules, instantiate them directly or through a linker, and use
+function and memory exports. The hello, linking, and serialize examples also
+demonstrate creating a no-argument host function.
 
 The native dependency is Wasmtime 46.0.1's C API. Native artifacts are
 kept out of Git and pinned by URL and SHA-256 in `wasmtime-artifacts.json`.
 Published source distributions contain the pinned artifacts themselves, so
 installing a release does not download or discover native dependencies.
 
-All examples load readable WebAssembly text and compile it at runtime.
-`deserializeModule` remains available for trusted serialized modules produced
-by the matching Wasmtime version and target.
+The hello, GCD, linking, and memory examples load readable WebAssembly text and
+compile it at runtime. The serialize example compiles the hello module once,
+serializes its compiled representation, then deserializes and runs it under a
+fresh engine. Only deserialize trusted modules produced by a compatible
+Wasmtime version, target, and engine configuration.
 
 ```sh
 python3 scripts/prepare-wasmtime.py
@@ -21,6 +24,8 @@ cabal build
 cabal run hello
 cabal run gcd
 cabal run linking
+cabal run memory
+cabal run serialize
 cabal test
 ```
 
