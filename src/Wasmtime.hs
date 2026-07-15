@@ -14,6 +14,7 @@ module Wasmtime
     Func,
     Memory,
     Instance,
+    Linker,
     WasmtimeException (..),
     newEngine,
     newStore,
@@ -22,6 +23,9 @@ module Wasmtime
     deserializeModule,
     newHostFunc0,
     instantiate,
+    newLinker,
+    defineInstance,
+    instantiateWithLinker,
     getFunc,
     getMemory,
     newMemory,
@@ -98,6 +102,12 @@ data Instance = Instance
   { instancePointer :: ForeignPtr Raw.WasmtimeInstance,
     instanceStore :: Store,
     instanceModule :: Module
+  }
+
+-- | A collection of named definitions used to instantiate linked modules.
+data Linker = Linker
+  { linkerPointer :: ForeignPtr Raw.WasmtimeLinker,
+    linkerEngine :: Engine
   }
 
 -- | An error reported by Wasmtime, a WebAssembly trap, or invalid use of
@@ -263,6 +273,81 @@ instantiate store wasmModule imports = do
               moduleRaw
               externs
               (fromIntegral count)
+              instanceRaw
+              trapOutput
+          checkErrorOrTrap errorPointer =<< peek trapOutput
+  touchForeignPtr (storePointer store)
+  pure
+    Instance
+      { instancePointer = foreignPointer,
+        instanceStore = store,
+        instanceModule = wasmModule
+      }
+
+-- | Create an empty linker for the specified engine.
+--
+-- The linker is released automatically when it is no longer reachable and
+-- keeps its engine alive for its lifetime.
+--
+-- Throws @WasmtimeException@ if the linker cannot be allocated.
+newLinker :: Engine -> IO Linker
+newLinker engine@(Engine enginePointer) =
+  withForeignPtr enginePointer $ \engineRaw -> do
+    pointer <- Raw.wasmtimeLinkerNew engineRaw
+    when (pointer == nullPtr) $ throwIO (WasmtimeException "failed to create Wasmtime linker")
+    foreignPointer <-
+      Concurrent.newForeignPtr pointer $ do
+        Raw.wasmtimeLinkerDelete pointer
+        touchForeignPtr enginePointer
+    pure Linker {linkerPointer = foreignPointer, linkerEngine = engine}
+
+-- | Register all exports of an instance under a module name.
+--
+-- Imports of subsequently linked modules can refer to an export using this
+-- module name and the export's own name. The linker and store must use the same
+-- engine, and the instance must belong to the store.
+--
+-- Throws @WasmtimeException@ for an engine or store mismatch, a duplicate
+-- definition, or another linker error.
+defineInstance :: Linker -> Store -> String -> Instance -> IO ()
+defineInstance linker store name wasmInstance = do
+  ensureLinkerEngine linker store
+  unless (sameStore store (instanceStore wasmInstance)) $
+    throwIO (WasmtimeException "instance belongs to a different store")
+  withForeignPtr (linkerPointer linker) $ \linkerRaw ->
+    withForeignPtr (instancePointer wasmInstance) $ \instanceRaw ->
+      withCStringLen name $ \(namePointer, nameLength) ->
+        checkError
+          =<< Raw.wasmtimeLinkerDefineInstance
+            linkerRaw
+            (storeContext store)
+            namePointer
+            (fromIntegral nameLength)
+            instanceRaw
+  touchForeignPtr (storePointer store)
+
+-- | Instantiate a module by resolving its imports from a linker.
+--
+-- The linker, store, and module must all use the same engine. Instantiation
+-- also executes the module's start function, if it has one.
+--
+-- Throws @WasmtimeException@ for an engine mismatch, an unresolved or
+-- incorrectly typed import, or a WebAssembly trap during instantiation.
+instantiateWithLinker :: Linker -> Store -> Module -> IO Instance
+instantiateWithLinker linker store wasmModule = do
+  ensureLinkerEngine linker store
+  ensureSameEngine store wasmModule
+  foreignPointer <- mallocForeignPtrBytes Raw.instanceBytes
+  withForeignPtr (linkerPointer linker) $ \linkerRaw ->
+    withForeignPtr (modulePointer wasmModule) $ \moduleRaw ->
+      withForeignPtr foreignPointer $ \instanceRaw ->
+        alloca $ \trapOutput -> do
+          poke trapOutput nullPtr
+          errorPointer <-
+            Raw.wasmtimeLinkerInstantiate
+              linkerRaw
+              (storeContext store)
+              moduleRaw
               instanceRaw
               trapOutput
           checkErrorOrTrap errorPointer =<< peek trapOutput
@@ -538,6 +623,11 @@ ensureSameStore store =
   mapM_ $ \function ->
     unless (sameStore store (funcStore function)) $
       throwIO (WasmtimeException "imported function belongs to a different store")
+
+ensureLinkerEngine :: Linker -> Store -> IO ()
+ensureLinkerEngine linker store =
+  unless (sameEngine (linkerEngine linker) (storeEngine store)) $
+    throwIO (WasmtimeException "linker and store use different engines")
 
 sameEngine :: Engine -> Engine -> Bool
 sameEngine (Engine left) (Engine right) = left == right

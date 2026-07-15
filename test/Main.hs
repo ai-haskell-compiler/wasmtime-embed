@@ -18,6 +18,24 @@ helloWat =
   )
   """
 
+linking1Wat :: ByteString
+linking1Wat =
+  """
+  (module
+    (import "linking2" "notify" (func $notify))
+    (func (export "run") (call $notify))
+  )
+  """
+
+linking2Wat :: ByteString
+linking2Wat =
+  """
+  (module
+    (import "" "notify" (func $notify))
+    (export "notify" (func $notify))
+  )
+  """
+
 main :: IO ()
 main = do
   compilationEngine <- newEngine
@@ -44,3 +62,16 @@ main = do
       | "callback exploded" `isInfixOf` message -> pure ()
     Left exception -> fail ("unexpected trap: " ++ show exception)
     Right () -> fail "callback exception did not become a trap"
+
+  linkedCallRan <- newIORef False
+  notify <- newHostFunc0 store (writeIORef linkedCallRan True)
+  linking2Module <- compileWatModule engine linking2Wat
+  linking2Instance <- instantiate store linking2Module [notify]
+  linker <- newLinker engine
+  defineInstance linker store "linking2" linking2Instance
+  linking1Module <- compileWatModule engine linking1Wat
+  linking1Instance <- instantiateWithLinker linker store linking1Module
+  linkedRun <- getFunc store linking1Instance "run"
+  call0 store linkedRun
+  didRun <- readIORef linkedCallRan
+  if didRun then pure () else fail "linked host callback did not run"

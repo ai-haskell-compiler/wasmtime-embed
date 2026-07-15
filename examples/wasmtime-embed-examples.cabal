@@ -9,6 +9,8 @@ build-type:    Simple
 data-files:
     gcd/gcd.wat
     hello/hello.wat
+    linking/linking1.wat
+    linking/linking2.wat
     memory/memory.wat
 
 executable gcd
@@ -28,6 +30,18 @@ executable hello
   other-modules: Paths_wasmtime_embed_examples
   main-is: Main.hs
   hs-source-dirs: hello
+  build-depends:
+      base >=4.18 && <5,
+      bytestring >=0.11 && <0.13,
+      wasmtime-embed >=0.1 && <0.2
+  ghc-options: -Wall -Wcompat
+  default-language: GHC2021
+
+executable linking
+  autogen-modules: Paths_wasmtime_embed_examples
+  other-modules: Paths_wasmtime_embed_examples
+  main-is: Main.hs
+  hs-source-dirs: linking
   build-depends:
       base >=4.18 && <5,
       bytestring >=0.11 && <0.13,
