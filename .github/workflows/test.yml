@@ -27,8 +27,24 @@ jobs:
           ghc-version: ${{ matrix.ghc-version }}
           cabal-version: "3.14.2.0"
 
+      - name: Cache pinned Wasmtime artifact
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: vendor/wasmtime
+          key: wasmtime-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('wasmtime-artifacts.json', 'scripts/prepare-wasmtime.py') }}
+
       - name: Prepare pinned Wasmtime artifact
         run: python3 scripts/prepare-wasmtime.py
+
+      - name: Cache Cabal build
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: |
+            ~/.cabal/store
+            dist-newstyle
+          key: cabal-${{ runner.os }}-ghc-${{ matrix.ghc-version }}-${{ hashFiles('cabal.project', '**/*.cabal') }}
+          restore-keys: |
+            cabal-${{ runner.os }}-ghc-${{ matrix.ghc-version }}-
 
       - name: Build
         run: cabal build all
