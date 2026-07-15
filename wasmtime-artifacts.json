@@ -9,6 +9,15 @@
       "include": "include",
       "static_library": "lib/libwasmtime.a",
       "static_library_name": "libwasmtime.a"
+    },
+    "x86_64-linux": {
+      "archive": "wasmtime-v46.0.1-x86_64-linux-c-api.tar.xz",
+      "archive_root": "wasmtime-v46.0.1-x86_64-linux-c-api",
+      "sha256": "4b7e7acf08467de6147f11c8fb71c4db7623035064c096976aa969d54171fed4",
+      "url": "https://github.com/bytecodealliance/wasmtime/releases/download/v46.0.1/wasmtime-v46.0.1-x86_64-linux-c-api.tar.xz",
+      "include": "min/include",
+      "static_library": "min/lib/libwasmtime.a",
+      "static_library_name": "libwasmtime.a"
     }
   }
 }

@@ -45,7 +45,11 @@ library
     include-dirs: vendor/wasmtime/aarch64-darwin/include
     hsc2hs-options: --cflag=-Ivendor/wasmtime/aarch64-darwin/include
   else
-    buildable: False
+    if os(linux) && arch(x86_64)
+      include-dirs: vendor/wasmtime/x86_64-linux/include
+      hsc2hs-options: --cflag=-Ivendor/wasmtime/x86_64-linux/include
+    else
+      buildable: False
 test-suite wasmtime-embed-test
   import: warnings
   type: exitcode-stdio-1.0
