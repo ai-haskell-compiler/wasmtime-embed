@@ -1,6 +1,6 @@
 module Main where
 
-import qualified Data.ByteString as ByteString
+import Data.ByteString qualified as ByteString
 import Paths_wasmtime_embed_examples (getDataFileName)
 import Wasmtime
 
