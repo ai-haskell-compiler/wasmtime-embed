@@ -1,0 +1,21 @@
+cabal-version: 3.8
+name:          wasmtime-embed-examples
+version:       0.1.0.0
+synopsis:      Examples for wasmtime-embed
+description:   Runnable examples for the high-level wasmtime-embed API.
+category:      WebAssembly
+license:       Unlicense
+build-type:    Simple
+data-files:    hello/hello.cwasm
+
+executable hello
+  autogen-modules: Paths_wasmtime_embed_examples
+  other-modules: Paths_wasmtime_embed_examples
+  main-is: Main.hs
+  hs-source-dirs: hello
+  build-depends:
+      base >=4.18 && <5,
+      bytestring >=0.11 && <0.13,
+      wasmtime-embed >=0.1 && <0.2
+  ghc-options: -Wall -Wcompat
+  default-language: GHC2021
