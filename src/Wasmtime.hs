@@ -2,6 +2,11 @@
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DerivingStrategies #-}
 
+-- | High-level Haskell bindings to Wasmtime's C API.
+--
+-- Native resources are finalized automatically. Wasmtime errors, WebAssembly
+-- traps, and invalid relationships between Haskell handles are reported as
+-- @WasmtimeException@.
 module Wasmtime
   ( Engine,
     Store,
@@ -45,40 +50,58 @@ import GHC.Generics (Generic)
 import System.IO.Unsafe (unsafePerformIO)
 import qualified Wasmtime.Raw as Raw
 
+-- | A WebAssembly compilation environment and its configuration.
 newtype Engine = Engine (ForeignPtr Raw.WasmEngine)
 
+-- | The runtime state owned by one engine.
 data Store = Store
   { storePointer :: ForeignPtr Raw.WasmtimeStore,
     storeContext :: Ptr Raw.WasmtimeContext,
     storeEngine :: Engine
   }
 
+-- | A compiled WebAssembly module.
 data Module = Module
   { modulePointer :: ForeignPtr Raw.WasmtimeModule,
     moduleEngine :: Engine
   }
 
+-- | A WebAssembly or host-defined function belonging to a store.
 data Func = Func
   { funcPointer :: ForeignPtr Raw.WasmtimeExtern,
     funcStore :: Store
   }
 
+-- | An instantiated WebAssembly module belonging to a store.
 data Instance = Instance
   { instancePointer :: ForeignPtr Raw.WasmtimeInstance,
     instanceStore :: Store,
     instanceModule :: Module
   }
 
+-- | An error reported by Wasmtime, a WebAssembly trap, or invalid use of
+-- handles from different engines or stores.
 newtype WasmtimeException = WasmtimeException String
   deriving stock (Show, Generic)
   deriving anyclass (Exception)
 
+-- | Create a new engine with the default configuration.
+--
+-- The engine is released automatically when it is no longer reachable.
+--
+-- Throws @WasmtimeException@ if the engine cannot be allocated.
 newEngine :: IO Engine
 newEngine = do
   pointer <- Raw.wasmEngineNew
   when (pointer == nullPtr) $ throwIO (WasmtimeException "failed to create Wasmtime engine")
   Engine <$> newForeignPtr Raw.wasmEngineDeleteFinalizer pointer
 
+-- | Create a fresh store within the specified engine.
+--
+-- The store has no host data attached to it. It is released automatically when
+-- it is no longer reachable and keeps its engine alive for its lifetime.
+--
+-- Throws @WasmtimeException@ if the store cannot be allocated.
 newStore :: Engine -> IO Store
 newStore engine@(Engine enginePointer) =
   withForeignPtr enginePointer $ \engineRaw -> do
@@ -91,7 +114,14 @@ newStore engine@(Engine enginePointer) =
         touchForeignPtr enginePointer
     pure Store {storePointer = foreignPointer, storeContext = context, storeEngine = engine}
 
--- | Parse WebAssembly text and compile it into a module.
+-- | Convert WebAssembly text format to binary and compile it into a module.
+--
+-- The input is parsed and validated according to the engine's configuration.
+-- Neither the engine nor the input bytes are consumed, and the compiled module
+-- is released automatically when it is no longer reachable.
+--
+-- Throws @WasmtimeException@ if the text cannot be parsed or the resulting
+-- WebAssembly module cannot be compiled.
 compileWatModule :: Engine -> ByteString -> IO Module
 compileWatModule engine@(Engine enginePointer) wat =
   ByteString.unsafeUseAsCStringLen wat $ \(watBytes, watSize) ->
@@ -115,9 +145,14 @@ compileWatModule engine@(Engine enginePointer) wat =
               foreignPointer <- newForeignPtr Raw.wasmtimeModuleDeleteFinalizer pointer
               pure Module {modulePointer = foreignPointer, moduleEngine = engine}
 
--- | Load a trusted module previously serialized by the matching Wasmtime
--- version and target. Wasmtime serialized modules must not be accepted from
--- untrusted sources.
+-- | Build a module from serialized compiled-module data.
+--
+-- Only pass data previously produced by a compatible Wasmtime version and
+-- target. Serialized modules are not safe to accept from untrusted sources.
+-- Neither the engine nor the input bytes are consumed, and the deserialized
+-- module is released automatically when it is no longer reachable.
+--
+-- Throws @WasmtimeException@ if the data cannot be deserialized.
 deserializeModule :: Engine -> ByteString -> IO Module
 deserializeModule engine@(Engine enginePointer) serialized =
   ByteString.unsafeUseAsCStringLen serialized $ \(bytes, size) ->
@@ -133,6 +168,15 @@ deserializeModule engine@(Engine enginePointer) serialized =
         foreignPointer <- newForeignPtr Raw.wasmtimeModuleDeleteFinalizer pointer
         pure Module {modulePointer = foreignPointer, moduleEngine = engine}
 
+-- | Create a host-defined function with no parameters or results.
+--
+-- The function belongs to the specified store and can be supplied as an import
+-- to 'instantiate'. The action is invoked each time WebAssembly calls the
+-- function. If the action raises an exception, the exception is converted into
+-- a WebAssembly trap; a host call that encounters it raises
+-- @WasmtimeException@.
+--
+-- The callback's lifetime is managed automatically with the Wasmtime store.
 newHostFunc0 :: Store -> IO () -> IO Func
 newHostFunc0 store action = mask_ $ do
   stable <- newStablePtr action
@@ -152,6 +196,15 @@ newHostFunc0 store action = mask_ $ do
   touchForeignPtr (storePointer store)
   pure Func {funcPointer = foreignPointer, funcStore = store}
 
+-- | Instantiate a WebAssembly module with the provided imports.
+--
+-- Imports must be listed in the same order as the module's imports and the list
+-- must have exactly the expected length. Every imported function must belong to
+-- the specified store, and the module must use the store's engine. Instantiation
+-- also executes the module's start function, if it has one.
+--
+-- Throws @WasmtimeException@ for an engine or store mismatch, a linking error,
+-- or a WebAssembly trap during instantiation.
 instantiate :: Store -> Module -> [Func] -> IO Instance
 instantiate store wasmModule imports = do
   ensureSameEngine store wasmModule
@@ -179,6 +232,13 @@ instantiate store wasmModule imports = do
         instanceModule = wasmModule
       }
 
+-- | Get a function export by name from an instance.
+--
+-- The instance must belong to the specified store. The returned function also
+-- belongs to that store.
+--
+-- Throws @WasmtimeException@ if the instance belongs to a different store, the
+-- export does not exist, or the export is not a function.
 getFunc :: Store -> Instance -> String -> IO Func
 getFunc store wasmInstance name = do
   unless (sameStore store (instanceStore wasmInstance)) $
@@ -202,6 +262,13 @@ getFunc store wasmInstance name = do
   touchForeignPtr (storePointer store)
   pure Func {funcPointer = foreignPointer, funcStore = store}
 
+-- | Call a WebAssembly function with no arguments and no results.
+--
+-- The function must belong to the specified store and have the corresponding
+-- WebAssembly signature.
+--
+-- Throws @WasmtimeException@ if the store or function signature is wrong, if
+-- Wasmtime reports another call error, or if execution traps.
 call0 :: Store -> Func -> IO ()
 call0 store function = do
   unless (sameStore store (funcStore function)) $
@@ -222,6 +289,12 @@ call0 store function = do
   touchForeignPtr (storePointer store)
 
 -- | Call a function with two WebAssembly @i32@ arguments and one @i32@ result.
+--
+-- The function must belong to the specified store and have the corresponding
+-- WebAssembly signature.
+--
+-- Throws @WasmtimeException@ if the store or function signature is wrong, if
+-- Wasmtime reports another call error, or if execution traps.
 call2I32 :: Store -> Func -> Int32 -> Int32 -> IO Int32
 call2I32 store function left right = do
   unless (sameStore store (funcStore function)) $
