@@ -8,7 +8,7 @@ license:       Unlicense
 build-type:    Simple
 data-files:
     gcd/gcd.wat
-    hello/hello.cwasm
+    hello/hello.wat
 
 executable gcd
   autogen-modules: Paths_wasmtime_embed_examples

@@ -11,7 +11,6 @@ import Foreign.Ptr (FunPtr, Ptr, plusPtr)
 import Foreign.Storable (peekByteOff, pokeByteOff)
 
 data WasmEngine
-data WasmConfig
 data WasmFuncType
 data WasmTrap
 data WasmtimeCaller
@@ -106,20 +105,8 @@ foreign import ccall "wrapper"
 foreign import ccall "wrapper"
   wrapFinalizer :: Finalizer -> IO (FunPtr Finalizer)
 
-foreign import ccall unsafe "wasm_config_new"
-  wasmConfigNew :: IO (Ptr WasmConfig)
-
-foreign import ccall unsafe "wasm_engine_new_with_config"
-  wasmEngineNewWithConfig :: Ptr WasmConfig -> IO (Ptr WasmEngine)
-
-foreign import ccall unsafe "wasmtime_config_gc_support_set"
-  wasmtimeConfigGcSupportSet :: Ptr WasmConfig -> CBool -> IO ()
-
-foreign import ccall unsafe "wasmtime_config_concurrency_support_set"
-  wasmtimeConfigConcurrencySupportSet :: Ptr WasmConfig -> CBool -> IO ()
-
-foreign import ccall unsafe "wasmtime_config_wasm_threads_set"
-  wasmtimeConfigWasmThreadsSet :: Ptr WasmConfig -> CBool -> IO ()
+foreign import ccall unsafe "wasm_engine_new"
+  wasmEngineNew :: IO (Ptr WasmEngine)
 
 foreign import ccall unsafe "&wasm_engine_delete"
   wasmEngineDeleteFinalizer :: FunPtr (Ptr WasmEngine -> IO ())

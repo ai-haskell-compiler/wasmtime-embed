@@ -75,13 +75,7 @@ newtype WasmtimeException = WasmtimeException String
 
 newEngine :: IO Engine
 newEngine = do
-  config <- Raw.wasmConfigNew
-  when (config == nullPtr) $
-    throwIO (WasmtimeException "failed to create Wasmtime config")
-  Raw.wasmtimeConfigGcSupportSet config (CBool 0)
-  Raw.wasmtimeConfigConcurrencySupportSet config (CBool 0)
-  Raw.wasmtimeConfigWasmThreadsSet config (CBool 0)
-  pointer <- Raw.wasmEngineNewWithConfig config
+  pointer <- Raw.wasmEngineNew
   when (pointer == nullPtr) $ throwIO (WasmtimeException "failed to create Wasmtime engine")
   Engine <$> newForeignPtr Raw.wasmEngineDeleteFinalizer pointer
 

@@ -10,10 +10,9 @@ kept out of Git and pinned by URL and SHA-256 in `wasmtime-artifacts.json`.
 Published source distributions contain the pinned artifacts themselves, so
 installing a release does not download or discover native dependencies.
 
-The GCD example loads readable WebAssembly text and compiles it at runtime. The
-hello example demonstrates the ahead-of-time path by bundling a `.cwasm` module;
-`deserializeModule` loads trusted serialized modules produced by the matching
-Wasmtime version and target.
+Both examples load readable WebAssembly text and compile it at runtime.
+`deserializeModule` remains available for trusted serialized modules produced
+by the matching Wasmtime version and target.
 
 ```sh
 python3 scripts/prepare-wasmtime.py
@@ -28,10 +27,10 @@ downloads the artifact for the host into the ignored `vendor/wasmtime` cache
 and verifies its checksum. A source distribution downloaded from Hackage is
 already self-contained.
 
-The example programs and their precompiled modules belong to the separate local
-`wasmtime-embed-examples` package. The root `cabal.project` includes that package
-for convenient development, while the publishable `wasmtime-embed` package
-still contains only its library and test suite.
+The example programs and their WAT modules belong to the separate local
+`wasmtime-embed-examples` package. The root `cabal.project` includes that
+package for convenient development, while the publishable `wasmtime-embed`
+package still contains only its library and test suite.
 
 ## Dependencies
 
