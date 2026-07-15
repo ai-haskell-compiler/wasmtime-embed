@@ -45,9 +45,10 @@ declarations can be added from the headers one feature at a time. The ABI facts
 should continue to come from `hsc2hs`; hard-coding union layouts would make the
 binding unnecessarily platform-specific and brittle.
 
-The artifact manifest currently contains Apple Silicon macOS. Supporting a new
-platform means adding one manifest entry and a Cabal/Setup target mapping; Git
-history does not grow with either new targets or Wasmtime upgrades.
+The artifact manifest currently contains Apple Silicon macOS and x86_64 Linux.
+Supporting a new platform means adding one manifest entry and a Cabal/Setup
+target mapping; Git history does not grow with either new targets or Wasmtime
+upgrades.
 
 ## Releases
 

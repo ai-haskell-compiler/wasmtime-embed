@@ -5,7 +5,7 @@ import Distribution.Simple (UserHooks (buildHook), defaultMainWithHooks, simpleU
 import Distribution.Simple.LocalBuildInfo (LocalBuildInfo, buildDir, hostPlatform)
 import Distribution.Simple.Setup (BuildFlags)
 import Distribution.Simple.UserHooks (Args)
-import Distribution.System (Arch (AArch64), OS (OSX), Platform (Platform))
+import Distribution.System (Arch (AArch64, X86_64), OS (Linux, OSX), Platform (Platform))
 import Distribution.Utils.Path (getSymbolicPath)
 import System.Directory (copyFile, createDirectoryIfMissing, doesFileExist)
 import System.FilePath ((</>))
@@ -42,5 +42,6 @@ prepareStaticArchive package localBuildInfo userHooks flags = do
 
 targetKey :: Platform -> FilePath
 targetKey (Platform AArch64 OSX) = "aarch64-darwin"
+targetKey (Platform X86_64 Linux) = "x86_64-linux"
 targetKey platform =
   error $ "no Wasmtime artifact mapping for Cabal platform " ++ show platform
