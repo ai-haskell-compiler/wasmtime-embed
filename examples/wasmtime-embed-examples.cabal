@@ -7,7 +7,7 @@ category:      WebAssembly
 license:       Unlicense
 build-type:    Simple
 data-files:
-    gcd/gcd.cwasm
+    gcd/gcd.wat
     hello/hello.cwasm
 
 executable gcd

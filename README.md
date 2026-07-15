@@ -1,19 +1,19 @@
 # wasmtime-embed
 
 An experimental high-level Haskell binding to the Wasmtime C API. It currently
-implements the Wasmtime Book's hello-world and GCD flows: load an ahead-of-time
-compiled module, instantiate it, find function exports, and call them. The
-hello example also demonstrates creating a no-argument host function.
+implements the Wasmtime Book's hello-world and GCD flows: compile or load a
+module, instantiate it, find function exports, and call them. The hello example
+also demonstrates creating a no-argument host function.
 
-The native dependency is Wasmtime 46.0.1's minified C API. Native artifacts are
+The native dependency is Wasmtime 46.0.1's C API. Native artifacts are
 kept out of Git and pinned by URL and SHA-256 in `wasmtime-artifacts.json`.
 Published source distributions contain the pinned artifacts themselves, so
 installing a release does not download or discover native dependencies.
 
-The minified runtime intentionally omits the compiler and WAT parser. Modules
-must therefore be ahead-of-time compiled and serialized by the matching
-Wasmtime version and target. The examples package bundles such `.cwasm` modules;
-`deserializeModule` loads trusted serialized modules at runtime.
+The GCD example loads readable WebAssembly text and compiles it at runtime. The
+hello example demonstrates the ahead-of-time path by bundling a `.cwasm` module;
+`deserializeModule` loads trusted serialized modules produced by the matching
+Wasmtime version and target.
 
 ```sh
 python3 scripts/prepare-wasmtime.py

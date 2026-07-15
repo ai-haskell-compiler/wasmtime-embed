@@ -11,6 +11,7 @@ module Wasmtime
     WasmtimeException (..),
     newEngine,
     newStore,
+    compileWatModule,
     deserializeModule,
     newHostFunc0,
     instantiate,
@@ -74,7 +75,13 @@ newtype WasmtimeException = WasmtimeException String
 
 newEngine :: IO Engine
 newEngine = do
-  pointer <- Raw.wasmEngineNew
+  config <- Raw.wasmConfigNew
+  when (config == nullPtr) $
+    throwIO (WasmtimeException "failed to create Wasmtime config")
+  Raw.wasmtimeConfigGcSupportSet config (CBool 0)
+  Raw.wasmtimeConfigConcurrencySupportSet config (CBool 0)
+  Raw.wasmtimeConfigWasmThreadsSet config (CBool 0)
+  pointer <- Raw.wasmEngineNewWithConfig config
   when (pointer == nullPtr) $ throwIO (WasmtimeException "failed to create Wasmtime engine")
   Engine <$> newForeignPtr Raw.wasmEngineDeleteFinalizer pointer
 
@@ -89,6 +96,30 @@ newStore engine@(Engine enginePointer) =
         Raw.wasmtimeStoreDelete pointer
         touchForeignPtr enginePointer
     pure Store {storePointer = foreignPointer, storeContext = context, storeEngine = engine}
+
+-- | Parse WebAssembly text and compile it into a module.
+compileWatModule :: Engine -> ByteString -> IO Module
+compileWatModule engine@(Engine enginePointer) wat =
+  ByteString.unsafeUseAsCStringLen wat $ \(watBytes, watSize) ->
+    allocaBytesAligned Raw.byteVecBytes Raw.byteVecAlignment $ \wasm -> do
+      checkError =<< Raw.wasmtimeWat2Wasm watBytes (fromIntegral watSize) wasm
+      bracket
+        (pure ())
+        (const (Raw.wasmByteVecDelete wasm))
+        $ \() ->
+          alloca $ \moduleOutput ->
+            withForeignPtr enginePointer $ \engineRaw -> do
+              wasmBytes <- Raw.byteVecData wasm
+              wasmSize <- Raw.byteVecSize wasm
+              checkError =<<
+                Raw.wasmtimeModuleNew
+                  engineRaw
+                  (castPtr wasmBytes)
+                  wasmSize
+                  moduleOutput
+              pointer <- peek moduleOutput
+              foreignPointer <- newForeignPtr Raw.wasmtimeModuleDeleteFinalizer pointer
+              pure Module {modulePointer = foreignPointer, moduleEngine = engine}
 
 -- | Load a trusted module previously serialized by the matching Wasmtime
 -- version and target. Wasmtime serialized modules must not be accepted from

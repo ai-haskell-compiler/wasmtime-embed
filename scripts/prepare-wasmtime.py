@@ -103,7 +103,13 @@ def prepare(target: str, version: str, artifact: dict[str, str]) -> None:
     destination = VENDOR_ROOT / target
     stamp = destination / "ARTIFACT.json"
     expected_stamp = json.dumps(
-        {"target": target, "version": version, "sha256": artifact["sha256"]},
+        {
+            "target": target,
+            "version": version,
+            "sha256": artifact["sha256"],
+            "include": artifact["include"],
+            "static_library": artifact["static_library"],
+        },
         indent=2,
         sort_keys=True,
     ) + "\n"
