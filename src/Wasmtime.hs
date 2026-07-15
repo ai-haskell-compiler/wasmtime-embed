@@ -12,6 +12,7 @@ module Wasmtime
     Store,
     Module,
     Func,
+    Memory,
     Instance,
     WasmtimeException (..),
     newEngine,
@@ -21,18 +22,31 @@ module Wasmtime
     newHostFunc0,
     instantiate,
     getFunc,
+    getMemory,
+    newMemory,
+    memorySize,
+    memoryDataSize,
+    readMemoryByte,
+    writeMemoryByte,
+    growMemory,
     call0,
+    call0I32,
+    call1I32,
     call2I32,
+    call2I32Unit,
   )
 where
 
 import Control.Exception (Exception, SomeException, bracket, displayException, mask_, throwIO, try)
 import Control.Monad (unless, when)
 import Data.ByteString (ByteString)
-import qualified Data.ByteString.Unsafe as ByteString
+import Data.ByteString.Unsafe qualified as ByteString
 import Data.Int (Int32)
+import Data.Maybe (fromMaybe)
+import Data.Word (Word64, Word8)
 import Foreign.C.String (peekCStringLen, withCStringLen)
-import Foreign.C.Types (CBool (..))
+import Foreign.C.Types (CBool (..), CSize)
+import Foreign.Concurrent qualified as Concurrent
 import Foreign.ForeignPtr
   ( ForeignPtr,
     mallocForeignPtrBytes,
@@ -40,15 +54,14 @@ import Foreign.ForeignPtr
     touchForeignPtr,
     withForeignPtr,
   )
-import qualified Foreign.Concurrent as Concurrent
 import Foreign.Marshal.Alloc (alloca, allocaBytesAligned)
 import Foreign.Marshal.Utils (copyBytes)
 import Foreign.Ptr (FunPtr, Ptr, castPtr, nullFunPtr, nullPtr, plusPtr)
 import Foreign.StablePtr (StablePtr, castPtrToStablePtr, castStablePtrToPtr, deRefStablePtr, freeStablePtr, newStablePtr)
-import Foreign.Storable (peek, poke)
+import Foreign.Storable (peek, peekElemOff, poke, pokeElemOff)
 import GHC.Generics (Generic)
 import System.IO.Unsafe (unsafePerformIO)
-import qualified Wasmtime.Raw as Raw
+import Wasmtime.Raw qualified as Raw
 
 -- | A WebAssembly compilation environment and its configuration.
 newtype Engine = Engine (ForeignPtr Raw.WasmEngine)
@@ -70,6 +83,12 @@ data Module = Module
 data Func = Func
   { funcPointer :: ForeignPtr Raw.WasmtimeExtern,
     funcStore :: Store
+  }
+
+-- | A WebAssembly linear memory belonging to a store.
+data Memory = Memory
+  { memoryPointer :: ForeignPtr Raw.WasmtimeMemory,
+    memoryStore :: Store
   }
 
 -- | An instantiated WebAssembly module belonging to a store.
@@ -135,8 +154,8 @@ compileWatModule engine@(Engine enginePointer) wat =
             withForeignPtr enginePointer $ \engineRaw -> do
               wasmBytes <- Raw.byteVecData wasm
               wasmSize <- Raw.byteVecSize wasm
-              checkError =<<
-                Raw.wasmtimeModuleNew
+              checkError
+                =<< Raw.wasmtimeModuleNew
                   engineRaw
                   (castPtr wasmBytes)
                   wasmSize
@@ -158,8 +177,8 @@ deserializeModule engine@(Engine enginePointer) serialized =
   ByteString.unsafeUseAsCStringLen serialized $ \(bytes, size) ->
     alloca $ \moduleOutput ->
       withForeignPtr enginePointer $ \engineRaw -> do
-        checkError =<<
-          Raw.wasmtimeModuleDeserialize
+        checkError
+          =<< Raw.wasmtimeModuleDeserialize
             engineRaw
             (castPtr bytes)
             (fromIntegral size)
@@ -262,6 +281,96 @@ getFunc store wasmInstance name = do
   touchForeignPtr (storePointer store)
   pure Func {funcPointer = foreignPointer, funcStore = store}
 
+-- | Get a memory export by name from an instance.
+--
+-- Throws @WasmtimeException@ if the instance belongs to a different store, the
+-- export does not exist, or the export is not a memory.
+getMemory :: Store -> Instance -> String -> IO Memory
+getMemory store wasmInstance name = do
+  unless (sameStore store (instanceStore wasmInstance)) $
+    throwIO (WasmtimeException "instance belongs to a different store")
+  foreignPointer <- mallocForeignPtrBytes Raw.memoryBytes
+  withForeignPtr (instancePointer wasmInstance) $ \instanceRaw ->
+    withForeignPtr foreignPointer $ \memory ->
+      allocaBytesAligned Raw.externBytes Raw.externAlignment $ \external ->
+        withCStringLen name $ \(namePointer, nameLength) -> do
+          CBool found <-
+            Raw.wasmtimeInstanceExportGet
+              (storeContext store)
+              instanceRaw
+              namePointer
+              (fromIntegral nameLength)
+              external
+          unless (found /= 0) $
+            throwIO (WasmtimeException ("memory export not found: " ++ name))
+          kind <- Raw.externKind external
+          unless (kind == Raw.externKindMemory) $
+            throwIO (WasmtimeException ("export is not a memory: " ++ name))
+          copyBytes memory (Raw.externMemory external) Raw.memoryBytes
+  touchForeignPtr (storePointer store)
+  pure Memory {memoryPointer = foreignPointer, memoryStore = store}
+
+-- | Create a stand-alone 32-bit WebAssembly memory.
+--
+-- The minimum and optional maximum are expressed in WebAssembly pages.
+-- Throws @WasmtimeException@ if the limits are invalid or the memory cannot be
+-- allocated.
+newMemory :: Store -> Word64 -> Maybe Word64 -> IO Memory
+newMemory store minimumPages maximumPages =
+  alloca $ \memoryTypeOutput -> do
+    checkError
+      =<< Raw.wasmtimeMemoryTypeNew
+        minimumPages
+        (maybe 0 (const 1) maximumPages)
+        (fromMaybe 0 maximumPages)
+        0
+        0
+        16
+        memoryTypeOutput
+    memoryType <- peek memoryTypeOutput
+    bracket (pure memoryType) Raw.wasmMemoryTypeDelete $ \memoryTypeRaw -> do
+      foreignPointer <- mallocForeignPtrBytes Raw.memoryBytes
+      withForeignPtr foreignPointer $ \memory -> do
+        errorPointer <- Raw.wasmtimeMemoryNew (storeContext store) memoryTypeRaw memory
+        checkError errorPointer
+      touchForeignPtr (storePointer store)
+      pure Memory {memoryPointer = foreignPointer, memoryStore = store}
+
+-- | Return the current size of a memory in WebAssembly pages.
+memorySize :: Store -> Memory -> IO Word64
+memorySize store memory = withMemory store memory (Raw.wasmtimeMemorySize (storeContext store))
+
+-- | Return the current size of a memory in bytes.
+memoryDataSize :: Store -> Memory -> IO Int
+memoryDataSize store memory =
+  fromIntegral <$> withMemory store memory (Raw.wasmtimeMemoryDataSize (storeContext store))
+
+-- | Read one byte from linear memory.
+--
+-- Throws @WasmtimeException@ when the offset is out of bounds.
+readMemoryByte :: Store -> Memory -> Int -> IO Word8
+readMemoryByte store memory offset =
+  withMemoryData store memory offset $ \bytes -> peekElemOff bytes offset
+
+-- | Write one byte to linear memory.
+--
+-- Throws @WasmtimeException@ when the offset is out of bounds.
+writeMemoryByte :: Store -> Memory -> Int -> Word8 -> IO ()
+writeMemoryByte store memory offset value =
+  withMemoryData store memory offset $ \bytes -> pokeElemOff bytes offset value
+
+-- | Grow a memory by the specified number of WebAssembly pages and return its
+-- previous size.
+--
+-- Throws @WasmtimeException@ if the memory cannot grow by the requested amount.
+growMemory :: Store -> Memory -> Word64 -> IO Word64
+growMemory store memory delta =
+  withMemory store memory $ \memoryRaw ->
+    alloca $ \previousSize -> do
+      checkError
+        =<< Raw.wasmtimeMemoryGrow (storeContext store) memoryRaw delta previousSize
+      peek previousSize
+
 -- | Call a WebAssembly function with no arguments and no results.
 --
 -- The function must belong to the specified store and have the corresponding
@@ -288,6 +397,14 @@ call0 store function = do
       checkErrorOrTrap errorPointer =<< peek trapOutput
   touchForeignPtr (storePointer store)
 
+-- | Call a WebAssembly function with no arguments and one @i32@ result.
+call0I32 :: Store -> Func -> IO Int32
+call0I32 store function = callI32 store function []
+
+-- | Call a WebAssembly function with one @i32@ argument and one @i32@ result.
+call1I32 :: Store -> Func -> Int32 -> IO Int32
+call1I32 store function argument = callI32 store function [argument]
+
 -- | Call a function with two WebAssembly @i32@ arguments and one @i32@ result.
 --
 -- The function must belong to the specified store and have the corresponding
@@ -296,23 +413,45 @@ call0 store function = do
 -- Throws @WasmtimeException@ if the store or function signature is wrong, if
 -- Wasmtime reports another call error, or if execution traps.
 call2I32 :: Store -> Func -> Int32 -> Int32 -> IO Int32
-call2I32 store function left right = do
+call2I32 store function left right = callI32 store function [left, right]
+
+-- | Call a WebAssembly function with two @i32@ arguments and no results.
+call2I32Unit :: Store -> Func -> Int32 -> Int32 -> IO ()
+call2I32Unit store function left right = do
+  unless (sameStore store (funcStore function)) $
+    throwIO (WasmtimeException "function belongs to a different store")
+  withForeignPtr (funcPointer function) $ \external ->
+    withI32Arguments [left, right] $ \arguments argumentCount ->
+      alloca $ \trapOutput -> do
+        poke trapOutput nullPtr
+        errorPointer <-
+          Raw.wasmtimeFuncCall
+            (storeContext store)
+            (Raw.externFunc external)
+            arguments
+            argumentCount
+            nullPtr
+            0
+            trapOutput
+        checkErrorOrTrap errorPointer =<< peek trapOutput
+  touchForeignPtr (storePointer store)
+
+callI32 :: Store -> Func -> [Int32] -> IO Int32
+callI32 store function arguments = do
   unless (sameStore store (funcStore function)) $
     throwIO (WasmtimeException "function belongs to a different store")
   result <-
     withForeignPtr (funcPointer function) $ \external ->
-      allocaBytesAligned (2 * Raw.valBytes) Raw.valAlignment $ \arguments ->
+      withI32Arguments arguments $ \argumentPointer argumentCount ->
         allocaBytesAligned Raw.valBytes Raw.valAlignment $ \results ->
           alloca $ \trapOutput -> do
-            Raw.setValI32 arguments left
-            Raw.setValI32 (arguments `plusPtr` Raw.valBytes) right
             poke trapOutput nullPtr
             errorPointer <-
               Raw.wasmtimeFuncCall
                 (storeContext store)
                 (Raw.externFunc external)
-                arguments
-                2
+                argumentPointer
+                argumentCount
                 results
                 1
                 trapOutput
@@ -323,6 +462,32 @@ call2I32 store function left right = do
             Raw.valI32 results
   touchForeignPtr (storePointer store)
   pure result
+
+withI32Arguments :: [Int32] -> (Ptr Raw.WasmtimeVal -> CSize -> IO a) -> IO a
+withI32Arguments [] action = action nullPtr 0
+withI32Arguments arguments action =
+  allocaBytesAligned (length arguments * Raw.valBytes) Raw.valAlignment $ \output -> do
+    mapM_
+      (\(index, value) -> Raw.setValI32 (output `plusPtr` (index * Raw.valBytes)) value)
+      (zip [0 ..] arguments)
+    action output (fromIntegral (length arguments))
+
+withMemory :: Store -> Memory -> (Ptr Raw.WasmtimeMemory -> IO a) -> IO a
+withMemory store memory action = do
+  unless (sameStore store (memoryStore memory)) $
+    throwIO (WasmtimeException "memory belongs to a different store")
+  result <- withForeignPtr (memoryPointer memory) action
+  touchForeignPtr (storePointer store)
+  pure result
+
+withMemoryData :: Store -> Memory -> Int -> (Ptr Word8 -> IO a) -> IO a
+withMemoryData store memory offset action =
+  withMemory store memory $ \memoryRaw -> do
+    size <- fromIntegral <$> Raw.wasmtimeMemoryDataSize (storeContext store) memoryRaw
+    when (offset < 0 || offset >= size) $
+      throwIO (WasmtimeException ("memory offset out of bounds: " ++ show offset))
+    bytes <- Raw.wasmtimeMemoryData (storeContext store) memoryRaw
+    action bytes
 
 withExternArray :: [Func] -> (Ptr Raw.WasmtimeExtern -> Int -> IO a) -> IO a
 withExternArray functions action =

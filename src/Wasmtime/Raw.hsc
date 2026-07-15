@@ -5,7 +5,7 @@ module Wasmtime.Raw where
 #include <wasmtime.h>
 
 import Data.Int (Int32)
-import Data.Word (Word8)
+import Data.Word (Word8, Word64)
 import Foreign.C.Types (CBool (..), CChar, CSize (..))
 import Foreign.Ptr (FunPtr, Ptr, plusPtr)
 import Foreign.Storable (peekByteOff, pokeByteOff)
@@ -21,9 +21,11 @@ data WasmtimeStore
 data WasmtimeFunc
 data WasmtimeInstance
 data WasmtimeExtern
+data WasmtimeMemory
 data WasmtimeVal
 
 data WasmByteVec
+data WasmMemoryType
 
 byteVecSize :: Ptr WasmByteVec -> IO CSize
 byteVecSize pointer = peekByteOff pointer #{offset wasm_byte_vec_t, size}
@@ -65,8 +67,20 @@ setExternKindFunc pointer =
 externFunc :: Ptr WasmtimeExtern -> Ptr WasmtimeFunc
 externFunc pointer = pointer `plusPtr` #{offset wasmtime_extern_t, of.func}
 
+externMemory :: Ptr WasmtimeExtern -> Ptr WasmtimeMemory
+externMemory pointer = pointer `plusPtr` #{offset wasmtime_extern_t, of.memory}
+
 externKindFunc :: Word8
 externKindFunc = #{const WASMTIME_EXTERN_FUNC}
+
+externKindMemory :: Word8
+externKindMemory = #{const WASMTIME_EXTERN_MEMORY}
+
+memoryBytes :: Int
+memoryBytes = #{size wasmtime_memory_t}
+
+memoryAlignment :: Int
+memoryAlignment = #{alignment wasmtime_memory_t}
 
 valBytes :: Int
 valBytes = #{size wasmtime_val_t}
@@ -182,6 +196,30 @@ foreign import ccall safe "wasmtime_func_call"
     CSize ->
     Ptr (Ptr WasmTrap) ->
     IO (Ptr WasmtimeError)
+
+foreign import ccall safe "wasmtime_memorytype_new"
+  wasmtimeMemoryTypeNew ::
+    Word64 -> CBool -> Word64 -> CBool -> CBool -> Word8 -> Ptr (Ptr WasmMemoryType) -> IO (Ptr WasmtimeError)
+
+foreign import ccall unsafe "wasm_memorytype_delete"
+  wasmMemoryTypeDelete :: Ptr WasmMemoryType -> IO ()
+
+foreign import ccall safe "wasmtime_memory_new"
+  wasmtimeMemoryNew ::
+    Ptr WasmtimeContext -> Ptr WasmMemoryType -> Ptr WasmtimeMemory -> IO (Ptr WasmtimeError)
+
+foreign import ccall unsafe "wasmtime_memory_data"
+  wasmtimeMemoryData :: Ptr WasmtimeContext -> Ptr WasmtimeMemory -> IO (Ptr Word8)
+
+foreign import ccall unsafe "wasmtime_memory_data_size"
+  wasmtimeMemoryDataSize :: Ptr WasmtimeContext -> Ptr WasmtimeMemory -> IO CSize
+
+foreign import ccall unsafe "wasmtime_memory_size"
+  wasmtimeMemorySize :: Ptr WasmtimeContext -> Ptr WasmtimeMemory -> IO Word64
+
+foreign import ccall safe "wasmtime_memory_grow"
+  wasmtimeMemoryGrow ::
+    Ptr WasmtimeContext -> Ptr WasmtimeMemory -> Word64 -> Ptr Word64 -> IO (Ptr WasmtimeError)
 
 foreign import ccall unsafe "wasmtime_error_message"
   wasmtimeErrorMessage :: Ptr WasmtimeError -> Ptr WasmByteVec -> IO ()
