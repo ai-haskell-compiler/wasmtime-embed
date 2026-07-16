@@ -36,6 +36,28 @@ linking2Wat =
   )
   """
 
+multiWat :: ByteString
+multiWat =
+  """
+  (module
+    (func $f (import "" "f") (param i32 i64) (result i64 i32))
+    (func (export "g") (param i32 i64) (result i64 i32)
+      (call $f (local.get 0) (local.get 1)))
+    (func (export "round_trip_many")
+      (param i64 i64 i64 i64 i64 i64 i64 i64 i64 i64)
+      (result i64 i64 i64 i64 i64 i64 i64 i64 i64 i64)
+      local.get 0
+      local.get 1
+      local.get 2
+      local.get 3
+      local.get 4
+      local.get 5
+      local.get 6
+      local.get 7
+      local.get 8
+      local.get 9))
+  """
+
 main :: IO ()
 main = do
   compilationEngine <- newEngine
@@ -75,3 +97,21 @@ main = do
   call0 store linkedRun
   didRun <- readIORef linkedCallRan
   if didRun then pure () else fail "linked host callback did not run"
+
+  multiModule <- compileWatModule engine multiWat
+  callback <- newHostFunc store [I32Type, I64Type] [I64Type, I32Type] incrementAndFlip
+  multiInstance <- instantiate store multiModule [callback]
+  g <- getFunc store multiInstance "g"
+  call store g [I32 1, I64 3] >>= assertEqual [I64 4, I32 2]
+  roundTripMany <- getFunc store multiInstance "round_trip_many"
+  let many = map I64 [0 .. 9]
+  call store roundTripMany many >>= assertEqual many
+
+assertEqual :: (Eq a, Show a) => a -> a -> IO ()
+assertEqual expected actual
+  | actual == expected = pure ()
+  | otherwise = fail ("expected " ++ show expected ++ ", got " ++ show actual)
+
+incrementAndFlip :: [Val] -> IO [Val]
+incrementAndFlip [I32 a, I64 b] = pure [I64 (b + 1), I32 (a + 1)]
+incrementAndFlip _ = fail "unexpected callback arguments"

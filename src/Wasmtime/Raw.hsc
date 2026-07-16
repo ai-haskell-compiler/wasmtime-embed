@@ -4,7 +4,7 @@ module Wasmtime.Raw where
 
 #include <wasmtime.h>
 
-import Data.Int (Int32)
+import Data.Int (Int32, Int64)
 import Data.Word (Word8, Word64)
 import Foreign.C.Types (CBool (..), CChar, CSize (..))
 import Foreign.Ptr (FunPtr, Ptr, plusPtr)
@@ -12,6 +12,8 @@ import Foreign.Storable (peekByteOff, pokeByteOff)
 
 data WasmEngine
 data WasmFuncType
+data WasmValType
+data WasmValTypeVec
 data WasmTrap
 data WasmtimeCaller
 data WasmtimeContext
@@ -100,8 +102,37 @@ setValI32 pointer value = do
 valI32 :: Ptr WasmtimeVal -> IO Int32
 valI32 pointer = peekByteOff pointer #{offset wasmtime_val_t, of.i32}
 
+setValI64 :: Ptr WasmtimeVal -> Int64 -> IO ()
+setValI64 pointer value = do
+  pokeByteOff pointer #{offset wasmtime_val_t, kind} (#{const WASMTIME_I64} :: Word8)
+  pokeByteOff pointer #{offset wasmtime_val_t, of.i64} value
+
+valI64 :: Ptr WasmtimeVal -> IO Int64
+valI64 pointer = peekByteOff pointer #{offset wasmtime_val_t, of.i64}
+
 valKindI32 :: Word8
 valKindI32 = #{const WASMTIME_I32}
+
+valKindI64 :: Word8
+valKindI64 = #{const WASMTIME_I64}
+
+valTypeKindI32 :: Word8
+valTypeKindI32 = #{const WASM_I32}
+
+valTypeKindI64 :: Word8
+valTypeKindI64 = #{const WASM_I64}
+
+valTypeVecBytes :: Int
+valTypeVecBytes = #{size wasm_valtype_vec_t}
+
+valTypeVecAlignment :: Int
+valTypeVecAlignment = #{alignment wasm_valtype_vec_t}
+
+valTypeVecSize :: Ptr WasmValTypeVec -> IO CSize
+valTypeVecSize pointer = peekByteOff pointer #{offset wasm_valtype_vec_t, size}
+
+valTypeVecData :: Ptr WasmValTypeVec -> IO (Ptr (Ptr WasmValType))
+valTypeVecData pointer = peekByteOff pointer #{offset wasm_valtype_vec_t, data}
 
 type Finalizer = Ptr () -> IO ()
 
@@ -156,8 +187,26 @@ foreign import ccall safe "wasmtime_wat2wasm"
 foreign import ccall unsafe "&wasmtime_module_delete"
   wasmtimeModuleDeleteFinalizer :: FunPtr (Ptr WasmtimeModule -> IO ())
 
-foreign import capi unsafe "wasmtime.h wasm_functype_new_0_0"
-  wasmFuncTypeNew0_0 :: IO (Ptr WasmFuncType)
+foreign import ccall unsafe "wasm_valtype_new"
+  wasmValTypeNew :: Word8 -> IO (Ptr WasmValType)
+
+foreign import ccall unsafe "wasm_valtype_kind"
+  wasmValTypeKind :: Ptr WasmValType -> IO Word8
+
+foreign import ccall unsafe "wasm_valtype_vec_new_empty"
+  wasmValTypeVecNewEmpty :: Ptr WasmValTypeVec -> IO ()
+
+foreign import ccall unsafe "wasm_valtype_vec_new"
+  wasmValTypeVecNew :: Ptr WasmValTypeVec -> CSize -> Ptr (Ptr WasmValType) -> IO ()
+
+foreign import ccall unsafe "wasm_functype_new"
+  wasmFuncTypeNew :: Ptr WasmValTypeVec -> Ptr WasmValTypeVec -> IO (Ptr WasmFuncType)
+
+foreign import ccall unsafe "wasm_functype_params"
+  wasmFuncTypeParams :: Ptr WasmFuncType -> IO (Ptr WasmValTypeVec)
+
+foreign import ccall unsafe "wasm_functype_results"
+  wasmFuncTypeResults :: Ptr WasmFuncType -> IO (Ptr WasmValTypeVec)
 
 foreign import ccall unsafe "wasm_functype_delete"
   wasmFuncTypeDelete :: Ptr WasmFuncType -> IO ()
@@ -225,6 +274,9 @@ foreign import ccall safe "wasmtime_func_call"
     CSize ->
     Ptr (Ptr WasmTrap) ->
     IO (Ptr WasmtimeError)
+
+foreign import ccall unsafe "wasmtime_func_type"
+  wasmtimeFuncType :: Ptr WasmtimeContext -> Ptr WasmtimeFunc -> IO (Ptr WasmFuncType)
 
 foreign import ccall safe "wasmtime_memorytype_new"
   wasmtimeMemoryTypeNew ::

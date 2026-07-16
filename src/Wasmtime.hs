@@ -15,6 +15,8 @@ module Wasmtime
     Memory,
     Instance,
     Linker,
+    Val (..),
+    ValType (..),
     WasmtimeException (..),
     newEngine,
     newStore,
@@ -22,6 +24,7 @@ module Wasmtime
     serializeModule,
     deserializeModule,
     newHostFunc0,
+    newHostFunc,
     instantiate,
     newLinker,
     defineInstance,
@@ -39,6 +42,7 @@ module Wasmtime
     call1I32,
     call2I32,
     call2I32Unit,
+    call,
   )
 where
 
@@ -47,7 +51,7 @@ import Control.Monad (unless, when)
 import Data.ByteString (ByteString)
 import Data.ByteString qualified as ByteString
 import Data.ByteString.Unsafe qualified as ByteString.Unsafe
-import Data.Int (Int32)
+import Data.Int (Int32, Int64)
 import Data.Maybe (fromMaybe)
 import Data.Word (Word64, Word8)
 import Foreign.C.String (peekCStringLen, withCStringLen)
@@ -61,6 +65,7 @@ import Foreign.ForeignPtr
     withForeignPtr,
   )
 import Foreign.Marshal.Alloc (alloca, allocaBytesAligned)
+import Foreign.Marshal.Array (allocaArray)
 import Foreign.Marshal.Utils (copyBytes)
 import Foreign.Ptr (FunPtr, Ptr, castPtr, nullFunPtr, nullPtr, plusPtr)
 import Foreign.StablePtr (StablePtr, castPtrToStablePtr, castStablePtrToPtr, deRefStablePtr, freeStablePtr, newStablePtr)
@@ -109,6 +114,20 @@ data Linker = Linker
   { linkerPointer :: ForeignPtr Raw.WasmtimeLinker,
     linkerEngine :: Engine
   }
+
+-- | A numeric WebAssembly value supported by the high-level API.
+data Val
+  = I32 Int32
+  | I64 Int64
+  deriving stock (Eq, Show)
+
+-- | A numeric WebAssembly value type supported by the high-level API.
+data ValType
+  = I32Type
+  | I64Type
+  deriving stock (Eq, Show)
+
+data HostCallback = HostCallback [ValType] [ValType] ([Val] -> IO [Val])
 
 -- | An error reported by Wasmtime, a WebAssembly trap, or invalid use of
 -- handles from different engines or stores.
@@ -230,12 +249,22 @@ deserializeModule engine@(Engine enginePointer) serialized =
 --
 -- The callback's lifetime is managed automatically with the Wasmtime store.
 newHostFunc0 :: Store -> IO () -> IO Func
-newHostFunc0 store action = mask_ $ do
-  stable <- newStablePtr action
+newHostFunc0 store action =
+  newHostFunc store [] [] $ \_arguments -> action >> pure []
+
+-- | Create a host-defined function with the specified parameter and result
+-- types.
+--
+-- The callback receives arguments in WebAssembly signature order and must
+-- return exactly the declared result values. Callback exceptions and result
+-- mismatches are converted into WebAssembly traps.
+newHostFunc :: Store -> [ValType] -> [ValType] -> ([Val] -> IO [Val]) -> IO Func
+newHostFunc store parameterTypes resultTypes action = mask_ $ do
+  stable <- newStablePtr (HostCallback parameterTypes resultTypes action)
   foreignPointer <- mallocForeignPtrBytes Raw.externBytes
   withForeignPtr foreignPointer $ \external ->
     allocaBytesAligned Raw.funcBytes Raw.funcAlignment $ \function ->
-      bracket Raw.wasmFuncTypeNew0_0 Raw.wasmFuncTypeDelete $ \functionType -> do
+      withFuncType parameterTypes resultTypes $ \functionType -> do
         Raw.wasmtimeFuncNew
           (storeContext store)
           functionType
@@ -544,6 +573,43 @@ call2I32Unit store function left right = do
         checkErrorOrTrap errorPointer =<< peek trapOutput
   touchForeignPtr (storePointer store)
 
+-- | Call a WebAssembly function with dynamically typed numeric arguments and
+-- return all of its numeric results.
+--
+-- The function's result signature is inspected before the call. Currently
+-- only @i32@ and @i64@ parameters and results are supported.
+call :: Store -> Func -> [Val] -> IO [Val]
+call store function arguments = do
+  unless (sameStore store (funcStore function)) $
+    throwIO (WasmtimeException "function belongs to a different store")
+  results <-
+    withForeignPtr (funcPointer function) $ \external ->
+      bracket
+        (Raw.wasmtimeFuncType (storeContext store) (Raw.externFunc external))
+        Raw.wasmFuncTypeDelete
+        $ \functionType -> do
+          parameterTypes <- readValTypeVector =<< Raw.wasmFuncTypeParams functionType
+          resultTypes <- readValTypeVector =<< Raw.wasmFuncTypeResults functionType
+          unless (map valType arguments == parameterTypes) $
+            throwIO (WasmtimeException "function argument types do not match its signature")
+          withVals arguments $ \argumentPointer argumentCount ->
+            withResultBuffer resultTypes $ \resultPointer resultCount ->
+              alloca $ \trapOutput -> do
+                poke trapOutput nullPtr
+                errorPointer <-
+                  Raw.wasmtimeFuncCall
+                    (storeContext store)
+                    (Raw.externFunc external)
+                    argumentPointer
+                    argumentCount
+                    resultPointer
+                    resultCount
+                    trapOutput
+                checkErrorOrTrap errorPointer =<< peek trapOutput
+                readVals resultTypes resultPointer
+  touchForeignPtr (storePointer store)
+  pure results
+
 callI32 :: Store -> Func -> [Int32] -> IO Int32
 callI32 store function arguments = do
   unless (sameStore store (funcStore function)) $
@@ -579,6 +645,88 @@ withI32Arguments arguments action =
       (\(index, value) -> Raw.setValI32 (output `plusPtr` (index * Raw.valBytes)) value)
       (zip [0 ..] arguments)
     action output (fromIntegral (length arguments))
+
+withVals :: [Val] -> (Ptr Raw.WasmtimeVal -> CSize -> IO a) -> IO a
+withVals [] action = action nullPtr 0
+withVals values action =
+  allocaBytesAligned (length values * Raw.valBytes) Raw.valAlignment $ \output -> do
+    mapM_ (uncurry (writeVal output)) (zip [0 ..] values)
+    action output (fromIntegral (length values))
+
+withResultBuffer :: [ValType] -> (Ptr Raw.WasmtimeVal -> CSize -> IO a) -> IO a
+withResultBuffer [] action = action nullPtr 0
+withResultBuffer resultTypes action =
+  allocaBytesAligned (length resultTypes * Raw.valBytes) Raw.valAlignment $ \output ->
+    action output (fromIntegral (length resultTypes))
+
+writeVal :: Ptr Raw.WasmtimeVal -> Int -> Val -> IO ()
+writeVal output index value =
+  case value of
+    I32 number -> Raw.setValI32 pointer number
+    I64 number -> Raw.setValI64 pointer number
+  where
+    pointer = output `plusPtr` (index * Raw.valBytes)
+
+readVals :: [ValType] -> Ptr Raw.WasmtimeVal -> IO [Val]
+readVals types pointer =
+  mapM
+    (\(index, valueType) -> readVal valueType (pointer `plusPtr` (index * Raw.valBytes)))
+    (zip [0 ..] types)
+
+readVal :: ValType -> Ptr Raw.WasmtimeVal -> IO Val
+readVal expected pointer = do
+  actual <- Raw.valKind pointer
+  unless (actual == rawValKind expected) $
+    throwIO (WasmtimeException "function result type does not match its signature")
+  case expected of
+    I32Type -> I32 <$> Raw.valI32 pointer
+    I64Type -> I64 <$> Raw.valI64 pointer
+
+valType :: Val -> ValType
+valType (I32 _) = I32Type
+valType (I64 _) = I64Type
+
+rawValType :: ValType -> Word8
+rawValType I32Type = Raw.valTypeKindI32
+rawValType I64Type = Raw.valTypeKindI64
+
+rawValKind :: ValType -> Word8
+rawValKind I32Type = Raw.valKindI32
+rawValKind I64Type = Raw.valKindI64
+
+withFuncType :: [ValType] -> [ValType] -> (Ptr Raw.WasmFuncType -> IO a) -> IO a
+withFuncType parameterTypes resultTypes action =
+  allocaBytesAligned Raw.valTypeVecBytes Raw.valTypeVecAlignment $ \parameters ->
+    allocaBytesAligned Raw.valTypeVecBytes Raw.valTypeVecAlignment $ \results -> do
+      fillValTypeVector parameters parameterTypes
+      fillValTypeVector results resultTypes
+      functionType <- Raw.wasmFuncTypeNew parameters results
+      when (functionType == nullPtr) $
+        throwIO (WasmtimeException "failed to create function type")
+      bracket (pure functionType) Raw.wasmFuncTypeDelete action
+
+fillValTypeVector :: Ptr Raw.WasmValTypeVec -> [ValType] -> IO ()
+fillValTypeVector output [] = Raw.wasmValTypeVecNewEmpty output
+fillValTypeVector output types =
+  allocaArray (length types) $ \elements -> do
+    mapM_
+      (\(index, valueType) -> Raw.wasmValTypeNew (rawValType valueType) >>= pokeElemOff elements index)
+      (zip [0 ..] types)
+    Raw.wasmValTypeVecNew output (fromIntegral (length types)) elements
+
+readValTypeVector :: Ptr Raw.WasmValTypeVec -> IO [ValType]
+readValTypeVector vector = do
+  count <- fromIntegral <$> Raw.valTypeVecSize vector
+  elements <- Raw.valTypeVecData vector
+  mapM
+    (\index -> peekElemOff elements index >>= Raw.wasmValTypeKind >>= decodeValType)
+    [0 .. count - 1]
+
+decodeValType :: Word8 -> IO ValType
+decodeValType kind
+  | kind == Raw.valTypeKindI32 = pure I32Type
+  | kind == Raw.valTypeKindI64 = pure I64Type
+  | otherwise = throwIO (WasmtimeException "function uses an unsupported value type")
 
 withMemory :: Store -> Memory -> (Ptr Raw.WasmtimeMemory -> IO a) -> IO a
 withMemory store memory action = do
@@ -668,9 +816,19 @@ readMessage fill =
         peekCStringLen (bytes, fromIntegral size)
 
 hostCallback :: Raw.FuncCallback
-hostCallback environment _caller _arguments _argumentCount _results _resultCount = do
-  action <- deRefStablePtr (castPtrToStablePtr environment :: StablePtr (IO ()))
-  outcome <- try action
+hostCallback environment _caller arguments argumentCount results resultCount = do
+  HostCallback parameterTypes resultTypes action <-
+    deRefStablePtr (castPtrToStablePtr environment :: StablePtr HostCallback)
+  outcome <- try $ do
+    unless (fromIntegral argumentCount == length parameterTypes) $
+      fail "host callback received the wrong number of arguments"
+    unless (fromIntegral resultCount == length resultTypes) $
+      fail "host callback received the wrong result capacity"
+    decodedArguments <- readVals parameterTypes arguments
+    callbackResults <- action decodedArguments
+    unless (map valType callbackResults == resultTypes) $
+      fail "host callback returned values that do not match its signature"
+    mapM_ (uncurry (writeVal results)) (zip [0 ..] callbackResults)
   case outcome of
     Right () -> pure nullPtr
     Left exception -> exceptionTrap exception
@@ -686,7 +844,7 @@ hostCallbackPointer = unsafePerformIO (Raw.wrapFuncCallback hostCallback)
 
 stableFinalizer :: Raw.Finalizer
 stableFinalizer environment =
-  freeStablePtr (castPtrToStablePtr environment :: StablePtr (IO ()))
+  freeStablePtr (castPtrToStablePtr environment :: StablePtr ())
 
 stableFinalizerPointer :: FunPtr Raw.Finalizer
 stableFinalizerPointer = unsafePerformIO (Raw.wrapFinalizer stableFinalizer)
