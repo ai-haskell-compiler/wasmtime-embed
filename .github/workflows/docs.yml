@@ -1,0 +1,70 @@
+name: Documentation
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build Haddock documentation
+    permissions:
+      contents: read
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - uses: haskell-actions/setup@33d9e1bb5b321fa8d6de86d9e9bbc251b4690b80 # v2
+        with:
+          ghc-version: "9.12.4"
+          cabal-version: "3.14.2.0"
+
+      - name: Cache pinned Wasmtime artifact
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: vendor/wasmtime
+          key: wasmtime-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('wasmtime-artifacts.json', 'scripts/prepare-wasmtime.py') }}
+
+      - name: Prepare pinned Wasmtime artifact
+        run: python3 scripts/prepare-wasmtime.py
+
+      - name: Cache Cabal dependencies
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: ~/.cabal/store
+          key: cabal-${{ runner.os }}-ghc-9.12.4-${{ hashFiles('cabal.project', '**/*.cabal') }}
+          restore-keys: |
+            cabal-${{ runner.os }}-ghc-9.12.4-
+
+      - name: Build documentation
+        run: cabal haddock wasmtime-embed --haddock-output-dir=site --haddock-html --haddock-hyperlink-source
+
+      - name: Verify documentation index
+        run: test -f site/wasmtime-embed/index.html
+
+      - name: Upload GitHub Pages artifact
+        if: github.event_name == 'push'
+        uses: actions/upload-pages-artifact@56afc609e74202658d3ffba0e8f6dda462b719fa # v3
+        with:
+          path: site/wasmtime-embed
+
+  deploy:
+    name: Deploy GitHub Pages
+    if: github.event_name == 'push'
+    needs: build
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    concurrency:
+      group: github-pages
+      cancel-in-progress: false
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Deploy GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@d6db90164ac5ed86f2b6aed7e0febac5b3c0c03e # v4
