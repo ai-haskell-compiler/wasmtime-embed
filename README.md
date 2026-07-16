@@ -1,5 +1,7 @@
 # wasmtime-embed
 
+[![Documentation build status](https://github.com/ai-haskell-compiler/wasmtime-embed/actions/workflows/docs.yml/badge.svg)](https://ai-haskell-compiler.github.io/wasmtime-embed/index.html)
+
 An experimental high-level Haskell binding to the Wasmtime C API. It currently
 implements the Wasmtime Book's hello-world, GCD, module-linking, serialization,
 and linear-memory flows: compile or load a module, serialize and deserialize
