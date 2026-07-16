@@ -19,7 +19,7 @@ jobs:
 
       - uses: haskell-actions/setup@33d9e1bb5b321fa8d6de86d9e9bbc251b4690b80 # v2
         with:
-          ghc-version: "9.14.1"
+          ghc-version: "9.12.4"
           cabal-version: "3.14.2.0"
 
       - name: Cache pinned Wasmtime artifact
@@ -35,9 +35,9 @@ jobs:
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: ~/.cabal/store
-          key: cabal-${{ runner.os }}-ghc-9.14.1-${{ hashFiles('cabal.project', '**/*.cabal') }}
+          key: cabal-${{ runner.os }}-ghc-9.12.4-${{ hashFiles('cabal.project', '**/*.cabal') }}
           restore-keys: |
-            cabal-${{ runner.os }}-ghc-9.14.1-
+            cabal-${{ runner.os }}-ghc-9.12.4-
 
       - name: Build documentation
         run: cabal haddock wasmtime-embed --haddock-output-dir=site --haddock-html --haddock-hyperlink-source
